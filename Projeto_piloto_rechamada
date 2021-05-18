@@ -1,0 +1,95 @@
+/* ============================ consulta geral  =============================================== */
+
+select 
+*
+into #dados_ech
+from premium.dbo.tb_carga_base_tech_FundacaoRenova with(nolock)
+
+
+select 
+min(segment) as segment,
+callid
+into #min_seg
+from premium.dbo.tb_carga_base_tech_fundaestado
+group by callid
+
+
+select  
+tb1.callid
+,tb1.segment
+,tb1.calling_pty as numero_chamador
+into #numero_chamador
+from #dados_ech  as tb1
+join #min_seg    as tb2 on  tb1.callid = tb2.callid and tb1.segment = tb2.segment
+
+/* ==============================  =============================================== */
+
+select 
+tb1.*
+,tb2.numero_chamador
+,0 as rechamada
+,0 as recebida_transferencia
+into #dados_geral
+from #dados_ech as tb1 
+left join #numero_chamador	 as tb2 on tb1.callid = tb2.callid
+where  len(numero_chamador) in (10,11)
+
+
+select *
+into #dados_pnb
+from #dados_geral							   as tb1
+join [mis_executivo].[dbo].[vw_aec_skills] as tb2 with(nolock) on tb1.dispsplit = tb2.numeroskill and cast(tb1.segstop as date) < cast(datafim as date) 
+where depara = 'FUNDA��O RENOVA BH'
+and len(numero_chamador) in (10,11)
+
+/* ======================= calculo final de transferencia  =======================  */
+
+select callid, min(segment) as [segment] 
+into #minsegment 
+from #dados_pnb 
+where disposition in (2,3) 
+group by callid
+
+
+update #dados_pnb
+set recebida_transferencia = 1
+where disposition in (2,3)
+and not exists (select * from #minsegment where #minsegment.callid = #dados_pnb.callid and #minsegment.segment = #dados_pnb.segment
+		)
+
+/* ======================= calculo final de rechamada  =======================  */
+
+select min(segstart) as segstart, numero_chamador 
+into #mincallid 
+from #dados_pnb 
+where disposition = 2 
+group by numero_chamador
+	
+update #dados_pnb
+set rechamada = 1
+where disposition = 2 and recebida_transferencia = 0
+and len(numero_chamador) in (10,11)
+and not exists (select * from #mincallid where #mincallid.segstart = #dados_pnb.segstart and #mincallid.numero_chamador = #dados_pnb.numero_chamador )
+ 
+
+select 
+		 segstart
+		,segstop
+		,segment
+		,callid
+		,dispsplit
+		,anslogin
+		,numero_chamador
+		,rechamada
+		,recebida_transferencia
+into [premium].[dbo].[tb_base_ech_FundacaoRenova]
+from #dados_pnb
+
+
+drop table #dados_ech
+drop table #min_seg
+drop table #dados_geral
+drop table #dados_pnb
+drop table #numero_chamador
+drop table #mincallid
+drop table #minsegment
